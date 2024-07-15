@@ -64,8 +64,8 @@ class AudioPlayer(pg.PlotWidget):
         # Load data
         assert csv is not None
         self.data = pd.read_csv(csv, header=None)
-        self.time = np.arange(0, len(self.data[0].values))  # unit = 10ms
-        self.values = self.data[1].values
+        self.x_data = np.arange(0, len(self.data[0].values))  # unit = 10ms
+        self.y_data = self.data[1].values
 
         # Load audio
         self.player = QMediaPlayer()
@@ -76,9 +76,9 @@ class AudioPlayer(pg.PlotWidget):
         # Plot
         self.setBackground("w")
         pen = pg.mkPen(color=(255, 0, 0), width=1)
-        self.graph = self.plot(
-            self.time,
-            self.values,
+        self.plot(
+            self.x_data,
+            self.y_data,
             pen=pen,
             symbol='o',
             size=10,
@@ -93,16 +93,16 @@ class AudioPlayer(pg.PlotWidget):
         # self.timer.start(50)
 
     def plot(self, x, y, pen, **kwargs):
-        self.scatter = pg.ScatterPlotItem(x=x, y=y, **kwargs)
+        self.x_data = np.array(x)
+        self.y_data = np.array(y)
+        self.scatter = pg.ScatterPlotItem(x=self.x_data, y=self.y_data, **kwargs)
         self.addItem(self.scatter)
         # self.scatter.sigClicked.connect(self.clicked)
 
         # Add a line connecting the points
         pen = 'r' if pen is None else pen
-        self.graph = pg.PlotDataItem(x, y, pen=pen)
-        self.addItem(self.graph)
-
-        return self.scatter
+        self.line = pg.PlotDataItem(x=self.x_data, y=self.y_data, pen=pen)
+        self.addItem(self.line)
 
     def mousePressEvent(self, ev):
         pos = self.plotItem.vb.mapSceneToView(ev.pos())
@@ -116,26 +116,25 @@ class AudioPlayer(pg.PlotWidget):
 
     def mouseMoveEvent(self, ev):
         if self.dragPoint is not None:
-            print(f"self.dragPoint: {self.dragPoint}")
-            data = self.dragPoint.data()
-            print(f"data: {data}")
-            # pos = self.plotItem.vb.mapSceneToView(ev.pos())
-            # new_y = pos.y()
-            # data['y'] = new_y
-            # self.dragPoint.setData(data=data)
-            # self.updateLine()
+            pos = self.plotItem.vb.mapSceneToView(ev.pos())
+            new_y = pos.y()
+            self.updatePointPos(self.dragPoint, new_y)
+            self.updateLine()
         else:
             super().mouseMoveEvent(ev)
+
+    def updatePointPos(self, point, new_y):
+        index = point.index()
+        self.y_data[index] = new_y
+        self.scatter.setData(x=self.x_data, y=self.y_data)
+
+    def updateLine(self):
+        self.line.setData(x=self.x_data, y=self.y_data)
 
     def mouseReleaseEvent(self, ev):
         self.dragPoint = None
         self.dragStartPos = None
         super().mouseReleaseEvent(ev)
-
-    def updateLine(self):
-        x = [p.pos().x() for p in self.scatter.points()]
-        y = [p.pos().y() for p in self.scatter.points()]
-        self.graph.setData(x, y)
 
     def update_playbar(self, time):
         self.playbar.setValue(time)
