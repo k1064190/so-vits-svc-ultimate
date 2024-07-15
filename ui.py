@@ -16,6 +16,7 @@ import numpy as np
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas, NavigationToolbar2QT as NavigationToolbar
 from matplotlib.figure import Figure
 import mplcursors
+import pyqtgraph as pg
 
 def get_available_devices():
     devices = []
@@ -49,6 +50,35 @@ def get_audio_devices():
             output_devices.append((device['name'], i))
 
     return input_devices, output_devices
+
+class Graph(pg.PlotWidget):
+    def __init__(self, parent=None, csv=None):
+        super().__init__(parent)
+        assert csv is not None
+        self.data = pd.read_csv(csv, header=None)
+        self.time = np.arange(0, len(self.data[0].values))  # unit = 10ms
+        self.values = self.data[1].values
+
+
+        self.setBackground("w")
+        pen = pg.mkPen(color=(255, 0, 0), width=5)
+
+        self.line = self.plot(
+            self.time,
+            self.values,
+            pen=pen,
+            symbol='o',
+            symbolSize=10,
+            symbolBrush="b",
+        )
+        # self.timer = QTimer()
+        # self.timer.timeout.connect(self.update_plot_data)
+        # self.timer.start(50)
+
+    def update_plot_data(self):
+        self.data[:-1] = self.data[1:]
+        self.data[-1] = np.random.normal()
+        self.plot(self.data)
 
 class PlotCanvas(FigureCanvas):
     def __init__(self, parent=None, csv=None):
@@ -320,8 +350,8 @@ class VoiceChangerGUI(QMainWindow):
         file_layout.addWidget(self.create_path_input("Input audio path", "Select Input Audio File", "input_audio"))
         file_layout.addWidget(self.create_path_input("Output audio path", "Select Output Audio File", "output_audio"))
 
-        self.plot_canvas = PlotCanvas(self, "test.csv")
-        file_layout.addWidget(self.plot_canvas)
+        self.graph = Graph(self, "test.csv")
+        file_layout.addWidget(self.graph)
         play_button = QPushButton("Play/Pause")
         file_layout.addWidget(play_button)
         play_button.clicked.connect(self.toggle_play_pause)
