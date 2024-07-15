@@ -17,6 +17,9 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 import mplcursors
 import pyqtgraph as pg
+from pyqtgraph import Point
+from pyqtgraph.Qt import QtCore
+
 
 def get_available_devices():
     devices = []
@@ -51,34 +54,96 @@ def get_audio_devices():
 
     return input_devices, output_devices
 
-class Graph(pg.PlotWidget):
-    def __init__(self, parent=None, csv=None):
+class AudioPlayer(pg.PlotWidget):
+    def __init__(self, parent=None, csv=None, audio=None):
         super().__init__(parent)
+        self.scatter = None
+        self.dragPoint = None
+        self.dragOffset = None
+
+        # Load data
         assert csv is not None
         self.data = pd.read_csv(csv, header=None)
         self.time = np.arange(0, len(self.data[0].values))  # unit = 10ms
         self.values = self.data[1].values
 
+        # Load audio
+        self.player = QMediaPlayer()
+        self.player.setMedia(QMediaContent(QUrl.fromLocalFile(audio)))
+        self.player.setNotifyInterval(50)  # 10ms
+        self.player.positionChanged.connect(self.update_plot) # it is not precise
 
+        # Plot
         self.setBackground("w")
-        pen = pg.mkPen(color=(255, 0, 0), width=5)
-
-        self.line = self.plot(
+        pen = pg.mkPen(color=(255, 0, 0), width=1)
+        self.graph = self.plot(
             self.time,
             self.values,
             pen=pen,
             symbol='o',
-            symbolSize=10,
-            symbolBrush="b",
+            size=10,
+            brush="b",
         )
+        self.getViewBox().scaleBy((0.2, 1))
+
+        self.playbar = self.addLine(x=0, pen=pg.mkPen(color=(0, 0, 0), width=2))
+
         # self.timer = QTimer()
         # self.timer.timeout.connect(self.update_plot_data)
         # self.timer.start(50)
 
-    def update_plot_data(self):
-        self.data[:-1] = self.data[1:]
-        self.data[-1] = np.random.normal()
-        self.plot(self.data)
+    def plot(self, x, y, pen, **kwargs):
+        self.scatter = pg.ScatterPlotItem(x=x, y=y, **kwargs)
+        self.addItem(self.scatter)
+        # self.scatter.sigClicked.connect(self.clicked)
+
+        # Add a line connecting the points
+        pen = 'r' if pen is None else pen
+        self.graph = pg.PlotDataItem(x, y, pen=pen)
+        self.addItem(self.graph)
+
+        return self.scatter
+
+    def mousePressEvent(self, ev):
+        pos = self.plotItem.vb.mapSceneToView(ev.pos())
+        points = self.scatter.pointsAt(pos)
+        if len(points) > 0:
+            self.dragPoint = points[0]
+            self.dragStartPos = self.dragPoint.pos()
+            print(f"Clicked at {self.dragPoint.pos()}")
+        elif ev.button() == QtCore.Qt.LeftButton:
+            super().mousePressEvent(ev)
+
+    def mouseMoveEvent(self, ev):
+        if self.dragPoint is not None:
+            print(f"self.dragPoint: {self.dragPoint}")
+            data = self.dragPoint.data()
+            print(f"data: {data}")
+            # pos = self.plotItem.vb.mapSceneToView(ev.pos())
+            # new_y = pos.y()
+            # data['y'] = new_y
+            # self.dragPoint.setData(data=data)
+            # self.updateLine()
+        else:
+            super().mouseMoveEvent(ev)
+
+    def mouseReleaseEvent(self, ev):
+        self.dragPoint = None
+        self.dragStartPos = None
+        super().mouseReleaseEvent(ev)
+
+    def updateLine(self):
+        x = [p.pos().x() for p in self.scatter.points()]
+        y = [p.pos().y() for p in self.scatter.points()]
+        self.graph.setData(x, y)
+
+    def update_playbar(self, time):
+        self.playbar.setValue(time)
+
+    def update_plot(self):
+        if self.player.state() == QMediaPlayer.PlayingState:
+            position = self.player.position()
+            self.update_playbar(position // 10) # unit = 10ms
 
 class PlotCanvas(FigureCanvas):
     def __init__(self, parent=None, csv=None):
@@ -350,15 +415,11 @@ class VoiceChangerGUI(QMainWindow):
         file_layout.addWidget(self.create_path_input("Input audio path", "Select Input Audio File", "input_audio"))
         file_layout.addWidget(self.create_path_input("Output audio path", "Select Output Audio File", "output_audio"))
 
-        self.graph = Graph(self, "test.csv")
+        self.graph = AudioPlayer(self, "test.csv", "test.wav")
         file_layout.addWidget(self.graph)
         play_button = QPushButton("Play/Pause")
         file_layout.addWidget(play_button)
-        play_button.clicked.connect(self.toggle_play_pause)
-
-        self.player = QMediaPlayer()
-        self.player.setMedia(QMediaContent(QUrl.fromLocalFile("test.wav")))
-        self.player.positionChanged.connect(self.update_plot)
+        play_button.clicked.connect(partial(self.toggle_play_pause, self.graph.player))
 
         # self.timer = QTimer()
         # self.timer.timeout.connect(self.update_plot)
@@ -395,17 +456,11 @@ class VoiceChangerGUI(QMainWindow):
         realtime_checkbox_state_changed()
 
         main_layout.addLayout(right_column)
-    def toggle_play_pause(self):
-        if self.player.state() == QMediaPlayer.PlayingState:
-            self.player.pause()
+    def toggle_play_pause(self, audio_player):
+        if audio_player.state() == QMediaPlayer.PlayingState:
+            audio_player.pause()
         else:
-            self.player.play()
-
-    def update_plot(self):
-        if self.player.state() == QMediaPlayer.PlayingState:
-            position = self.player.position()  # Convert to seconds
-            print(f"Position: {position}")
-            self.plot_canvas.update_time_line(position)
+            audio_player.play()
 
     def create_button(self, label, callback):
         button = QPushButton(label)
