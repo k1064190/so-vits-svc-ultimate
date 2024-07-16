@@ -70,8 +70,13 @@ class AudioPlayer(pg.PlotWidget):
         # Load audio
         self.player = QMediaPlayer()
         self.player.setMedia(QMediaContent(QUrl.fromLocalFile(audio)))
+
+        # Player parameters
+        self.player_prev_position = self.player.position()
+
+        # Player Event
         self.player.setNotifyInterval(50)  # 10ms
-        self.player.positionChanged.connect(self.update_plot) # it is not precise
+        self.player.positionChanged.connect(self.update_plot)
 
         # Plot
         self.setBackground("w")
@@ -84,13 +89,9 @@ class AudioPlayer(pg.PlotWidget):
             size=10,
             brush="b",
         )
-        self.getViewBox().scaleBy((0.2, 1))
+        # self.getViewBox().scaleBy((0.2, 1))
 
         self.playbar = self.addLine(x=0, pen=pg.mkPen(color=(0, 0, 0), width=2))
-
-        # self.timer = QTimer()
-        # self.timer.timeout.connect(self.update_plot_data)
-        # self.timer.start(50)
 
     def plot(self, x, y, pen, **kwargs):
         self.x_data = np.array(x)
@@ -104,22 +105,49 @@ class AudioPlayer(pg.PlotWidget):
         self.line = pg.PlotDataItem(x=self.x_data, y=self.y_data, pen=pen)
         self.addItem(self.line)
 
+        # clicking empty space in the plot will move the position to that time
+        self.plotItem.scene().sigMouseClicked.connect(self.moveTime)
+
+        self.autoRange()
+
+    def toggle_play_pause(self):
+        if self.player.state() == QMediaPlayer.PlayingState:
+            self.player.pause()
+        else:
+            if self.player.position() == self.player.duration():
+                self.player.setPosition(0)
+            self.player.play()
+
+    def moveTime(self, ev):
+        vb = self.plotItem.vb
+        scene_coords = ev.scenePos()
+        if self.sceneBoundingRect().contains(scene_coords):
+            mouse_point = vb.mapSceneToView(scene_coords)
+            time = int(mouse_point.x() * 10)
+            time = max(0, min(time, self.player.duration()))
+            self.player.setPosition(time)
+
     def mousePressEvent(self, ev):
         pos = self.plotItem.vb.mapSceneToView(ev.pos())
         points = self.scatter.pointsAt(pos)
         if len(points) > 0:
             self.dragPoint = points[0]
             self.dragStartPos = self.dragPoint.pos()
-            print(f"Clicked at {self.dragPoint.pos()}")
         elif ev.button() == QtCore.Qt.LeftButton:
             super().mousePressEvent(ev)
 
     def mouseMoveEvent(self, ev):
         if self.dragPoint is not None:
-            pos = self.plotItem.vb.mapSceneToView(ev.pos())
-            new_y = pos.y()
-            self.updatePointPos(self.dragPoint, new_y)
-            self.updateLine()
+            if self.sceneBoundingRect().contains(ev.pos()):
+                pos = self.plotItem.vb.mapSceneToView(ev.pos())
+                new_y = pos.y()
+                self.updatePointPos(self.dragPoint, new_y)
+                self.updateLine()
+            else:
+                # release the point
+                self.dragPoint = None
+                self.dragStartPos = None
+                super().mouseReleaseEvent(ev)
         else:
             super().mouseMoveEvent(ev)
 
@@ -140,117 +168,10 @@ class AudioPlayer(pg.PlotWidget):
         self.playbar.setValue(time)
 
     def update_plot(self):
-        if self.player.state() == QMediaPlayer.PlayingState:
-            position = self.player.position()
-            self.update_playbar(position // 10) # unit = 10ms
-
-class PlotCanvas(FigureCanvas):
-    def __init__(self, parent=None, csv=None):
-        fig = Figure(figsize=(10, 6))
-        self.ax = fig.add_subplot(111)
-        self.zoom_factor = 0.05
-        self.timeline = 0
-
-        super().__init__(fig)
-        self.setParent(parent)
-        assert csv is not None
-        self.data = pd.read_csv(csv, header=None)
-        # self.time = self.data[0].values
-        self.time = np.arange(0, len(self.data[0].values))  # unit = 10ms
-        self.values = self.data[1].values
-        self.start_xlim = (min(self.time), max(self.time))
-        self.start_ylim = (min(self.values), max(self.values))
-        self.current_xlim = self.start_xlim
-        self.current_ylim = self.start_ylim
-
-        self.plot()
-
-        self.x_zoom_speed = (self.start_xlim[1] - self.start_xlim[0]) * self.zoom_factor
-        self.y_zoom_speed = (self.start_ylim[1] - self.start_ylim[0]) * self.zoom_factor
-
-        self.drag_start = None
-        self.button_clicked = False
-
-        self.mpl_connect('scroll_event', self.on_scroll)
-        self.mpl_connect('button_press_event', self.on_button_press)
-        self.mpl_connect('motion_notify_event', self.on_clicked_move)
-        self.mpl_connect('button_release_event', self.on_button_release)
-
-    def plot(self):
-        self.ax.clear()
-        self.ax.set_xlim(self.current_xlim)
-        self.ax.set_ylim(self.current_ylim)
-        self.ax.plot(self.time, self.values, 'ro-')
-        self.ax.set_title('Interactive Plot')
-        self.ax.set_xlabel('Time (s)')
-        self.ax.set_ylabel('Values')
-        if self.timeline != 0:
-            self.ax.axvline(self.timeline, color='k')
-        self.draw()
-        # mplcursors.cursor(self.ax).connect("add", self.on_click)
-
-    def update_time_line(self, time):
-        self.timeline = time // 10
-        self.plot()
-
-    def on_scroll(self, event):
-        xlim = self.ax.get_xlim()
-        ylim = self.ax.get_ylim()
-        x, y = event.xdata, event.ydata
-        # add xlim[0] by x_zoom_speed and xlim[1] by -x_zoom_speed
-        # add ylim[0] by y_zoom_speed and ylim[1] by -y_zoom_speed
-        if event.button == 'up':
-            # width and height should be over zoom speed
-            next_xlim = (xlim[0] + self.x_zoom_speed, xlim[1] - self.x_zoom_speed)
-            width = next_xlim[1] - next_xlim[0]
-            next_ylim = (ylim[0] + self.y_zoom_speed, ylim[1] - self.y_zoom_speed)
-            height = next_ylim[1] - next_ylim[0]
-            if width >= self.x_zoom_speed and height >= self.y_zoom_speed:
-                self.ax.set_xlim(next_xlim)
-                self.ax.set_ylim(next_ylim)
-                self.current_xlim = next_xlim
-                self.current_ylim = next_ylim
-        elif event.button == 'down':
-            # width and height should be under start xlim and ylim
-            next_xlim = (xlim[0] - self.x_zoom_speed, xlim[1] + self.x_zoom_speed)
-            width = next_xlim[1] - next_xlim[0]
-            next_ylim = (ylim[0] - self.y_zoom_speed, ylim[1] + self.y_zoom_speed)
-            height = next_ylim[1] - next_ylim[0]
-            if width <= self.start_xlim[1] - self.start_xlim[0] and height <= self.start_ylim[1] - self.start_ylim[0]:
-                self.ax.set_xlim(next_xlim)
-                self.ax.set_ylim(next_ylim)
-                self.current_xlim = next_xlim
-                self.current_ylim = next_ylim
-        self.draw()
-
-    def on_button_press(self, event):
-        self.button_clicked = True
-        self.drag_start = (event.xdata, event.ydata)
-
-    def on_clicked_move(self, event):
-        if self.button_clicked:
-            x, y = event.xdata, event.ydata
-            xlim = self.ax.get_xlim()
-            ylim = self.ax.get_ylim()
-            x_diff = self.drag_start[0] - x
-            y_diff = self.drag_start[1] - y
-            next_xlim = (xlim[0] + x_diff, xlim[1] + x_diff)
-            next_ylim = (ylim[0] + y_diff, ylim[1] + y_diff)
-            self.ax.set_xlim(next_xlim)
-            self.ax.set_ylim(next_ylim)
-            self.current_xlim = next_xlim
-            self.current_ylim = next_ylim
-            self.draw()
-
-    def on_button_release(self, event):
-        self.button_clicked = False
-
-    def on_click(self, sel):
-        idx = sel.index
-        new_val, ok = QInputDialog.getDouble(self, 'Edit Value', 'Enter new value:')
-        if ok:
-            self.values[idx] = new_val
-            self.plot()
+        position = self.player.position()
+        if position != self.player_prev_position:
+            self.player_prev_position = position
+            self.update_playbar(position // 10)
 
 class VoiceChangerGUI(QMainWindow):
     def __init__(self):
@@ -418,7 +339,7 @@ class VoiceChangerGUI(QMainWindow):
         file_layout.addWidget(self.graph)
         play_button = QPushButton("Play/Pause")
         file_layout.addWidget(play_button)
-        play_button.clicked.connect(partial(self.toggle_play_pause, self.graph.player))
+        play_button.clicked.connect(self.graph.toggle_play_pause)
 
         # self.timer = QTimer()
         # self.timer.timeout.connect(self.update_plot)
@@ -436,8 +357,15 @@ class VoiceChangerGUI(QMainWindow):
         realtime_layout.addWidget(self.create_combo_box("Output device", [device[0] for device in self.output_devices], "output_device"))
         right_column.addWidget(realtime_group)
 
+        # Run arguments group
+        run_arguments_group = QGroupBox("Run Arguments")
+        run_arguments_layout = QHBoxLayout(run_arguments_group)
+        # Horizontal Checkbox
+        f0_modification_widget, f0_modification_checkbox = self.create_check_box("F0 Modification")
+        run_arguments_layout.addWidget(f0_modification_widget)
         button = self.create_button("Run", lambda: show_arguments(self))
-        right_column.addWidget(button)
+        run_arguments_layout.addWidget(button)
+        right_column.addWidget(run_arguments_group)
 
 
         def realtime_checkbox_state_changed():
@@ -455,11 +383,6 @@ class VoiceChangerGUI(QMainWindow):
         realtime_checkbox_state_changed()
 
         main_layout.addLayout(right_column)
-    def toggle_play_pause(self, audio_player):
-        if audio_player.state() == QMediaPlayer.PlayingState:
-            audio_player.pause()
-        else:
-            audio_player.play()
 
     def create_button(self, label, callback):
         button = QPushButton(label)
