@@ -1,6 +1,7 @@
 import json
 import os
 from functools import partial
+from typing import Optional
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QGroupBox, QScrollArea, QLabel, QComboBox, QPushButton, \
@@ -21,8 +22,8 @@ class InferenceTab(QWidget):
         # e.g) self.devices = [("CPU", "cpu"), ("NVIDIA GeForce RTX 3090", "cuda:0")]
         self.input_devices, self.output_devices = get_audio_devices()
         self.devices = get_available_devices()
-        self.json_file = "presets.json"
-        self.presets = load_json_file(self.json_file)
+        self.preset_folder = "presets"
+        self.presets = load_json_file(self.preset_folder)
         # Arguments that the preset saves
         self.common_arguments = {
             "model_path": None,
@@ -259,6 +260,7 @@ class InferenceTab(QWidget):
         preset_combo_box.currentIndexChanged.connect(lambda: self.load_gui_preset(preset_combo_box.currentText()))
         preset_select_delete.addWidget(preset_select, stretch=4)
         preset_delete = QPushButton("Delete")
+        preset_delete.clicked.connect(lambda: self.delete_current_preset(preset_combo_box))
         preset_select_delete.addWidget(preset_delete, stretch=1)
 
         preset_name_add = QHBoxLayout()
@@ -267,7 +269,7 @@ class InferenceTab(QWidget):
         self.preset_name.setPlaceholderText("Preset name")
         preset_name_add.addWidget(self.preset_name)
         preset_button = QPushButton("Save")
-        preset_button.clicked.connect(lambda: self.save_gui_preset(self.preset_name.text(), preset_select))
+        preset_button.clicked.connect(lambda: self.save_gui_preset(self.preset_name.text(), preset_combo_box))
         preset_name_add.addWidget(preset_button)
 
         preset_layout.addLayout(preset_select_delete)
@@ -332,11 +334,14 @@ class InferenceTab(QWidget):
 
         return widget   # widget > layout > label, combo_box
 
-    def clear_combo_box(self, combo_box, items, name):
+    def clear_combo_box(self, combo_box, items, name_or_idx: Optional[str or int]):
         combo_box.clear()
         combo_box.addItems(items)
-        if name is not None:
-            combo_box.setCurrentIndex(combo_box.findText(name))
+        if name_or_idx is not None:
+            if isinstance(name_or_idx, int):
+                combo_box.setCurrentIndex(name_or_idx)
+            else:
+                combo_box.setCurrentIndex(combo_box.findText(name_or_idx))
 
     def create_check_box(self, label, arguments_dict=None, var_name=None):
         widget = QWidget()
@@ -440,7 +445,7 @@ class InferenceTab(QWidget):
         self.preset_name.setText(preset_name)
 
 
-    def save_gui_preset(self, preset_name, combo_box_widget=None):
+    def save_gui_preset(self, preset_name, combo_box=None):
         if not preset_name:
             return
         preset = {}
@@ -459,13 +464,22 @@ class InferenceTab(QWidget):
         preset["retrieval"] = retrieval
         self.presets[preset_name] = preset
 
-        save_json_file(self.json_file, self.presets)
+        save_json_file(self.preset_folder, preset_name, preset)
 
         # combo_box_widget > layout > label, combo_box
-        combo_box = combo_box_widget.layout().itemAt(1).widget()
-        if combo_box_widget is not None and combo_box is not None:
+        if combo_box is not None:
             self.clear_combo_box(combo_box, list(self.presets.keys()), preset_name)
 
+    def delete_current_preset(self, combo_box):
+        preset_name = combo_box.currentText()
+        idx = combo_box.currentIndex()
+
+        del self.presets[preset_name]
+        # Delte the file, if exists
+        os.remove(f"presets/{preset_name}.json")
+
+        # Set the combo box to the previous index
+        self.clear_combo_box(combo_box, list(self.presets.keys()), idx-1)
+
     def closeEvent(self, ev):
-        self.json_file.close()
         ev.accept()

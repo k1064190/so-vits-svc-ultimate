@@ -23,4 +23,7 @@ class FontManager:
             QPushButton {{
                 font-size: {large_size}px;
             }}
+            QTabWidget {{
+                font-size: {large_size}px;
+            }}
         """)

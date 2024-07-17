@@ -24,7 +24,7 @@ from pyqtgraph.Qt import QtCore
 
 from audio_player import AudioPlayer
 from font_manager import FontManager
-from inference_ui import InferenceTab
+from inference_tab import InferenceTab
 from ui_utils import calculateWindowSize
 from widgets_visibility_manager import WidgetVisibilityManager
 
